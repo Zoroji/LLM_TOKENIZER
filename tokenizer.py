@@ -1,9 +1,10 @@
 
-
 class BasicTokenizer:
 
     def __init__(self):
         self.merges = {}
+        self.vocab = {idx : bytes([idx]) for idx in range(256)}
+
     
     def get_stats(self,tokens):
         counts = {}
@@ -33,6 +34,9 @@ class BasicTokenizer:
             idx = 256+i
             tokens = self.merge(tokens,highest_pair,idx)
             self.merges[highest_pair] = idx
+            #also add the new token to the vocab
+            p0,p1 = highest_pair
+            self.vocab[idx] = self.vocab[p0]+self.vocab[p1]
 
     def encode(self,text):
         tokens = list(map(int,text.encode('utf-8')))
@@ -45,6 +49,10 @@ class BasicTokenizer:
             tokens = self.merge(tokens,pair,idx)
         return tokens
 
+    def decode(self,tokens):
+        utfToken = b"".join(self.vocab[idx] for idx in tokens)
+        text = utfToken.decode('utf-8',errors='replace')
+        return text
 
 
 if __name__ == "__main__":
@@ -56,3 +64,11 @@ if __name__ == "__main__":
     B = BasicTokenizer()
     B.train(text,vocab_size,verbose=True)
     print(B.encode("Hello, how are you doing today?"))
+    print(B.decode(B.encode("Hello, how are you doing today?")))
+
+
+
+
+
+    #here is the reference github repo which i used to solve ht eexample prponlems 
+    #https://github.com/karpathy/minbpe/blob/master/exercise.md
