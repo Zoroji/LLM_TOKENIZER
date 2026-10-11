@@ -1,10 +1,13 @@
+import regex as re 
+
+GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
 class BasicTokenizer:
 
     def __init__(self):
         self.merges = {}
         self.vocab = {idx : bytes([idx]) for idx in range(256)}
-
+        self.pattern = re.compile(GPT4_SPLIT_PATTERN)
     
     def get_stats(self,tokens):
         counts = {}
@@ -24,30 +27,78 @@ class BasicTokenizer:
                 i+=1
         return new_tokens
 
-    def train(self,text,vocab_size,verbose=False):
-        tokens = list(map(int,text.encode('utf-8')))
-        num_iterations = vocab_size - 256 
+    def train(self, text, vocab_size, verbose=False):
+        # 1. Split text into regex chunks
+        chunks = re.findall(self.pattern, text)
 
-        for i in range(num_iterations):
-            stats = self.get_stats(tokens)
-            highest_pair = max(stats,key=stats.get)
-            idx = 256+i
-            tokens = self.merge(tokens,highest_pair,idx)
-            self.merges[highest_pair] = idx
-            #also add the new token to the vocab
-            p0,p1 = highest_pair
-            self.vocab[idx] = self.vocab[p0]+self.vocab[p1]
+        # 2. Convert every chunk into its own byte sequence
+        ids = [list(chunk.encode("utf-8")) for chunk in chunks]
 
-    def encode(self,text):
-        tokens = list(map(int,text.encode('utf-8')))
-        while len(tokens) >=2 : 
-            stats = self.get_stats(tokens)
-            pair = min(stats,key= lambda p : self.merges.get(p,float('inf')))
-            if pair not in self.merges:
+        num_merges = vocab_size - 256
+
+        for i in range(num_merges):
+            # 3. Count pairs separately in every chunk,
+            # then aggregate their frequencies
+            stats = {}
+
+            for chunk_ids in ids:
+                chunk_stats = self.get_stats(chunk_ids)
+
+                for pair, count in chunk_stats.items():
+                    stats[pair] = stats.get(pair, 0) + count
+
+            # No pairs remain to merge
+            if not stats:
                 break
-            idx = self.merges[pair]
-            tokens = self.merge(tokens,pair,idx)
-        return tokens
+
+            # 4. Select the most frequent pair
+            pair = max(stats, key=stats.get)
+            idx = 256 + i
+
+            if verbose:
+                print(f"Merge {i + 1}: {pair} -> {idx}")
+
+            # 5. Apply the merge independently to each chunk
+            ids = [
+                self.merge(chunk_ids, pair, idx)
+                for chunk_ids in ids
+            ]
+
+            # 6. Save the merge rule and corresponding bytes
+            self.merges[pair] = idx
+
+            p0, p1 = pair
+            self.vocab[idx] = self.vocab[p0] + self.vocab[p1]
+
+    
+    def encode(self, text):
+        # Split using the same pattern as training
+        chunks = re.findall(self.pattern, text)
+
+        output_ids = []
+
+        for chunk in chunks:
+            tokens = list(chunk.encode("utf-8"))
+
+            while len(tokens) >= 2:
+                stats = self.get_stats(tokens)
+
+                pair = min(
+                    stats,
+                    key=lambda p: self.merges.get(p, float("inf"))
+                )
+
+                if pair not in self.merges:
+                    break
+
+                idx = self.merges[pair]
+                tokens = self.merge(tokens, pair, idx)
+
+            # Append this chunk's IDs before processing the next
+            output_ids.extend(tokens)
+
+        return output_ids
+
 
     def decode(self,tokens):
         utfToken = b"".join(self.vocab[idx] for idx in tokens)
@@ -63,8 +114,19 @@ if __name__ == "__main__":
     vocab_size = 276    
     B = BasicTokenizer()
     B.train(text,vocab_size,verbose=True)
-    print(B.encode("Hello, how are you doing today?"))
-    print(B.decode(B.encode("Hello, how are you doing today?")))
+    sample = "Hello, how are you doing today?"
+
+    encoded = B.encode(sample)
+    decoded = B.decode(encoded)
+
+    print("Encoded:", encoded)
+    print("Decoded:", decoded)
+
+    assert decoded == sample
+    print("Round-trip test passed!")
+
+    print("\nRegex chunks:")
+    print(re.findall(B.pattern, sample))
 
 
 
